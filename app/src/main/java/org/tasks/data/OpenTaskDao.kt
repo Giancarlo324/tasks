@@ -6,9 +6,11 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.dmfs.tasks.contract.TaskContract
+import org.dmfs.tasks.contract.TaskContract.Tasks
 import org.json.JSONObject
 import org.tasks.R
 import org.tasks.preferences.PermissionChecker
+import timber.log.Timber
 import javax.inject.Inject
 
 class OpenTaskDao @Inject constructor(
@@ -53,13 +55,13 @@ class OpenTaskDao @Inject constructor(
     suspend fun getEtags(listId: Long): List<Pair<String, String>> = withContext(Dispatchers.IO) {
         val items = ArrayList<Pair<String, String>>()
         cr.query(
-                TaskContract.Tasks.getContentUri(authority),
-                arrayOf(TaskContract.Tasks._SYNC_ID, TaskContract.Tasks.SYNC1),
-                "${TaskContract.Tasks.LIST_ID} = $listId",
+                Tasks.getContentUri(authority),
+                arrayOf(Tasks._SYNC_ID, Tasks.SYNC1),
+                "${Tasks.LIST_ID} = $listId",
                 null,
                 null)?.use {
             while (it.moveToNext()) {
-                Pair(it.getString(TaskContract.Tasks._SYNC_ID)!!, it.getString(TaskContract.Tasks.SYNC1)!!).let(items::add)
+                Pair(it.getString(Tasks._SYNC_ID)!!, it.getString(Tasks.SYNC1)!!).let(items::add)
             }
         }
         items
@@ -67,9 +69,48 @@ class OpenTaskDao @Inject constructor(
 
     suspend fun delete(listId: Long, item: String): Int = withContext(Dispatchers.IO) {
         cr.delete(
-                TaskContract.Tasks.getContentUri(authority),
-                "${TaskContract.Tasks.LIST_ID} = $listId AND ${TaskContract.Tasks._SYNC_ID} = '$item'",
+                Tasks.getContentUri(authority),
+                "${Tasks.LIST_ID} = $listId AND ${Tasks._SYNC_ID} = '$item'",
                 null)
+    }
+
+    suspend fun getId(uid: String?): Long =
+            uid?.let {
+                withContext(Dispatchers.IO) {
+                    cr.query(
+                            Tasks.getContentUri(authority),
+                            arrayOf(Tasks._ID),
+                            "${Tasks._UID} = '$uid'",
+                            null,
+                            null)?.use {
+                        if (it.moveToFirst()) {
+                            it.getLong(Tasks._ID)
+                        } else {
+                            Timber.e("No task with uid=$uid")
+                            null
+                        }
+                    }
+                }
+            } ?: 0L
+
+    suspend fun getUid(id: Long): String? = if (id == 0L) {
+        null
+    } else {
+        withContext(Dispatchers.IO) {
+            cr.query(
+                    Tasks.getContentUri(authority),
+                    arrayOf(Tasks._UID),
+                    "${Tasks._ID} = $id",
+                    null,
+                    null)?.use {
+                if (it.moveToFirst()) {
+                    it.getString(Tasks._UID)
+                } else {
+                    Timber.e("No task with id=$id")
+                    null
+                }
+            }
+        }
     }
 
     companion object {

@@ -18,6 +18,7 @@ import kotlinx.coroutines.withContext
 import net.fortuna.ical4j.model.Date
 import net.fortuna.ical4j.model.property.Geo
 import net.fortuna.ical4j.model.property.RRule
+import org.dmfs.tasks.contract.TaskContract
 import org.dmfs.tasks.contract.TaskContract.Tasks
 import org.tasks.LocalBroadcastManager
 import org.tasks.analytics.Firebase
@@ -93,9 +94,10 @@ class OpenTasksSynchronizer @Inject constructor(
             caldavDao.delete(it)
         }
 
-        taskDao.getCaldavTasksToPush(calendar.uuid!!).forEach {
-            push(it, listId)
-        }
+        taskDao
+                .getCaldavTasksToPush(calendar.uuid!!)
+                .onEach { push(it, listId) }
+                .onEach { updateParent(it) }
 
         ctag?.let {
             if (ctag == calendar.ctag) {
@@ -177,7 +179,7 @@ class OpenTasksSynchronizer @Inject constructor(
         } else {
             null
         })
-        // set parent?
+        values.put(Tasks.PARENT_ID, null as Long?)
         // set tags
         val existing = cr.query(
                 Tasks.getContentUri(openTaskDao.authority),
@@ -202,18 +204,33 @@ class OpenTasksSynchronizer @Inject constructor(
                     throw Exception("update failed")
                 }
             } else {
+                values.put(Tasks._UID, caldavTask.remoteId)
                 values.put(Tasks.PRIORITY, toRemote(task.priority, task.priority))
                 cr.insert(Tasks.getContentUri(openTaskDao.authority), values)
                         ?: throw Exception("insert returned null")
             }
+
         } catch (e: Exception) {
             firebase.reportException(e)
             return@withContext
         }
-
         caldavTask.lastSync = currentTimeMillis()
         caldavDao.update(caldavTask)
         Timber.d("SENT $caldavTask")
+    }
+
+    private suspend fun updateParent(task: Task) = withContext(Dispatchers.IO) {
+        val caldavTask = caldavDao.getTask(task.id) ?: return@withContext
+        caldavTask.remoteParent
+                ?.takeIf { it.isNotBlank() }
+                ?.let {
+                    cr.insert(TaskContract.Properties.getContentUri(openTaskDao.authority), ContentValues().apply {
+                        put(TaskContract.Property.Relation.MIMETYPE, TaskContract.Property.Relation.CONTENT_ITEM_TYPE)
+                        put(TaskContract.Property.Relation.TASK_ID, openTaskDao.getId(caldavTask.remoteId))
+                        put(TaskContract.Property.Relation.RELATED_TYPE, TaskContract.Property.Relation.RELTYPE_PARENT)
+                        put(TaskContract.Property.Relation.RELATED_ID, openTaskDao.getId(caldavTask.remoteParent))
+                    })
+                }
     }
 
     private suspend fun applyChanges(
@@ -236,7 +253,7 @@ class OpenTasksSynchronizer @Inject constructor(
             if (existing == null) {
                 task = taskCreator.createWithValues("")
                 taskDao.createNew(task)
-                val remoteId = it.getColumnIndex(Tasks._UID).let(it::getString)
+                val remoteId = it.getString(Tasks._UID)
                 caldavTask = CaldavTask(task.id, calendar.uuid, remoteId, item)
             } else {
                 task = taskDao.fetch(existing.task)!!
@@ -264,7 +281,7 @@ class OpenTasksSynchronizer @Inject constructor(
             taskDao.save(task)
             caldavTask.etag = etag
             caldavTask.lastSync = DateUtilities.now() + 1000L
-            // update remote parent?
+            caldavTask.remoteParent = openTaskDao.getUid(it.getLong(Tasks.PARENT_ID))
             if (caldavTask.id == Task.NO_ID) {
                 caldavTask.id = caldavDao.insert(caldavTask)
                 Timber.d("NEW $caldavTask")
