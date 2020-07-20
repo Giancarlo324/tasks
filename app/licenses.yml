@@ -777,13 +777,13 @@
 - artifact: org.dmfs:rfc5545-datetime:+
   name: rfc5545-datetime
   copyrightHolder: Marten Gajda
-  license: The Apache License, Version 2.0
+  license: The Apache Software License, Version 2.0
   licenseUrl: http://www.apache.org/licenses/LICENSE-2.0.txt
   url: https://github.com/dmfs/rfc5545-datetime
 - artifact: org.dmfs:opentasks-provider:+
   name: opentasks-provider
   copyrightHolder: dmfs GmbH
-  license: The Apache License, Version 2.0
+  license: The Apache Software License, Version 2.0
   licenseUrl: http://www.apache.org/licenses/LICENSE-2.0.txt
   url: https://github.com/dmfs/rfc5545-datetime
   forceGenerate: true
