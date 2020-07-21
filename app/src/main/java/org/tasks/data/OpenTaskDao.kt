@@ -1,14 +1,20 @@
 package org.tasks.data
 
+import android.content.ContentValues
 import android.content.Context
 import android.database.Cursor
+import at.bitfire.ical4android.UnknownProperty
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import net.fortuna.ical4j.model.property.XProperty
 import org.dmfs.tasks.contract.TaskContract
+import org.dmfs.tasks.contract.TaskContract.Properties
+import org.dmfs.tasks.contract.TaskContract.Property.Relation
 import org.dmfs.tasks.contract.TaskContract.Tasks
 import org.json.JSONObject
 import org.tasks.R
+import org.tasks.caldav.iCalendar.Companion.APPLE_SORT_ORDER
 import org.tasks.preferences.PermissionChecker
 import timber.log.Timber
 import javax.inject.Inject
@@ -52,8 +58,8 @@ class OpenTaskDao @Inject constructor(
         calendars
     }
 
-    suspend fun getEtags(listId: Long): List<Pair<String, String>> = withContext(Dispatchers.IO) {
-        val items = ArrayList<Pair<String, String>>()
+    suspend fun getEtags(listId: Long): List<Pair<String, String?>> = withContext(Dispatchers.IO) {
+        val items = ArrayList<Pair<String, String?>>()
         cr.query(
                 Tasks.getContentUri(authority),
                 arrayOf(Tasks._SYNC_ID, Tasks.SYNC1),
@@ -61,7 +67,7 @@ class OpenTaskDao @Inject constructor(
                 null,
                 null)?.use {
             while (it.moveToNext()) {
-                Pair(it.getString(Tasks._SYNC_ID)!!, it.getString(Tasks.SYNC1)!!).let(items::add)
+                Pair(it.getString(Tasks._SYNC_ID)!!, it.getString(Tasks.SYNC1)).let(items::add)
             }
         }
         items
@@ -111,6 +117,54 @@ class OpenTaskDao @Inject constructor(
                 }
             }
         }
+    }
+
+    suspend fun getRemoteOrder(caldavTask: CaldavTask): Long? = withContext(Dispatchers.IO) {
+        val id = getId(caldavTask.remoteId)
+        cr.query(
+                Properties.getContentUri(authority),
+                arrayOf(Properties.DATA0),
+                "${Properties.TASK_ID} = $id AND ${Properties.MIMETYPE} = '${UnknownProperty.CONTENT_ITEM_TYPE}' AND ${Properties.DATA0} LIKE '%$APPLE_SORT_ORDER%'",
+                null,
+                null)?.use {
+            while (it.moveToNext()) {
+                it.getString(Properties.DATA0)
+                        ?.let(UnknownProperty::fromJsonString)
+                        ?.takeIf { xprop -> xprop.name.equals(APPLE_SORT_ORDER, true) }
+                        ?.let { xprop ->
+                            return@withContext xprop.value.toLong()
+                        }
+            }
+        }
+        return@withContext null
+    }
+
+    suspend fun setRemoteOrder(caldavTask: CaldavTask) = withContext(Dispatchers.IO) {
+        val id = getId(caldavTask.remoteId)
+        cr.delete(
+                Properties.getContentUri(authority),
+                "${Properties.TASK_ID} = $id AND ${Properties.MIMETYPE} = '${UnknownProperty.CONTENT_ITEM_TYPE}' AND ${Properties.DATA0} LIKE '%$APPLE_SORT_ORDER%'",
+                null)
+        caldavTask.order?.let {
+            cr.insert(Properties.getContentUri(authority), ContentValues().apply {
+                put(Properties.MIMETYPE, UnknownProperty.CONTENT_ITEM_TYPE)
+                put(Properties.TASK_ID, id)
+                put(Properties.DATA0, UnknownProperty.toJsonString(XProperty(APPLE_SORT_ORDER, it.toString())))
+            })
+        }
+    }
+
+    suspend fun updateParent(caldavTask: CaldavTask) = withContext(Dispatchers.IO) {
+        caldavTask.remoteParent
+                ?.takeIf { it.isNotBlank() }
+                ?.let {
+                    cr.insert(Properties.getContentUri(authority), ContentValues().apply {
+                        put(Relation.MIMETYPE, Relation.CONTENT_ITEM_TYPE)
+                        put(Relation.TASK_ID, getId(caldavTask.remoteId))
+                        put(Relation.RELATED_TYPE, Relation.RELTYPE_PARENT)
+                        put(Relation.RELATED_ID, getId(caldavTask.remoteParent))
+                    })
+                }
     }
 
     companion object {
