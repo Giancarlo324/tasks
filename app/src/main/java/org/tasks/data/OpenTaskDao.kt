@@ -10,6 +10,7 @@ import kotlinx.coroutines.withContext
 import net.fortuna.ical4j.model.property.XProperty
 import org.dmfs.tasks.contract.TaskContract
 import org.dmfs.tasks.contract.TaskContract.Properties
+import org.dmfs.tasks.contract.TaskContract.Property.Category
 import org.dmfs.tasks.contract.TaskContract.Property.Relation
 import org.dmfs.tasks.contract.TaskContract.Tasks
 import org.json.JSONObject
@@ -116,6 +117,37 @@ class OpenTaskDao @Inject constructor(
                     null
                 }
             }
+        }
+    }
+
+    suspend fun getTags(caldavTask: CaldavTask): List<String> = withContext(Dispatchers.IO) {
+        val id = getId(caldavTask.remoteId)
+        val tags = ArrayList<String>()
+        cr.query(
+                Properties.getContentUri(authority),
+                arrayOf(Properties.DATA1),
+                "${Properties.TASK_ID} = $id AND ${Properties.MIMETYPE} = '${Category.CONTENT_ITEM_TYPE}'",
+                null,
+                null)?.use {
+            while (it.moveToNext()) {
+                it.getString(Properties.DATA1)?.let(tags::add)
+            }
+        }
+        return@withContext tags
+    }
+
+    suspend fun setTags(caldavTask: CaldavTask, tags: List<String>) = withContext(Dispatchers.IO) {
+        val id = getId(caldavTask.remoteId)
+        cr.delete(
+                Properties.getContentUri(authority),
+                "${Properties.TASK_ID} = $id AND ${Properties.MIMETYPE} = '${Category.CONTENT_ITEM_TYPE}'",
+                null)
+        tags.forEach {
+            cr.insert(Properties.getContentUri(authority), ContentValues().apply {
+                put(Category.MIMETYPE, Category.CONTENT_ITEM_TYPE)
+                put(Category.TASK_ID, id)
+                put(Category.CATEGORY_NAME, it)
+            })
         }
     }
 

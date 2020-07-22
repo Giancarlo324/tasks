@@ -45,7 +45,9 @@ class OpenTasksSynchronizer @Inject constructor(
         private val firebase: Firebase,
         private val iCalendar: iCalendar,
         private val locationDao: LocationDao,
-        private val openTaskDao: OpenTaskDao) {
+        private val openTaskDao: OpenTaskDao,
+        private val tagDao: TagDao,
+        private val tagDataDao: TagDataDao) {
 
     private val cr = context.contentResolver
 
@@ -97,6 +99,8 @@ class OpenTasksSynchronizer @Inject constructor(
                 .getCaldavTasksToPush(calendar.uuid!!)
                 .mapNotNull { push(it, listId) }
                 .forEach {
+                    val tags = tagDataDao.getTagDataForTask(it.task).mapNotNull(TagData::name)
+                    openTaskDao.setTags(it, tags)
                     openTaskDao.setRemoteOrder(it)
                     openTaskDao.updateParent(it)
                     it.lastSync = currentTimeMillis()
@@ -185,7 +189,6 @@ class OpenTasksSynchronizer @Inject constructor(
             null
         })
         values.put(Tasks.PARENT_ID, null as Long?)
-        // set tags
         val existing = cr.query(
                 Tasks.getContentUri(openTaskDao.authority),
                 arrayOf(Tasks.PRIORITY),
@@ -267,6 +270,8 @@ class OpenTasksSynchronizer @Inject constructor(
             task.suppressSync()
             task.suppressRefresh()
             taskDao.save(task)
+            val tags = openTaskDao.getTags(caldavTask)
+            tagDao.applyTags(task, tagDataDao, iCalendar.getTags(tags))
             caldavTask.order = openTaskDao.getRemoteOrder(caldavTask)
             caldavTask.etag = etag
             caldavTask.lastSync = DateUtilities.now() + 1000L
