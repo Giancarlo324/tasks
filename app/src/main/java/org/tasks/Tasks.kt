@@ -21,6 +21,7 @@ import org.tasks.injection.InjectingJobIntentService
 import org.tasks.jobs.WorkManager
 import org.tasks.locale.Locale
 import org.tasks.location.GeofenceApi
+import org.tasks.opentasks.OpenTaskContentObserver
 import org.tasks.preferences.Preferences
 import org.tasks.receivers.RefreshReceiver
 import org.tasks.scheduling.CalendarNotificationIntentService
@@ -73,10 +74,14 @@ class Tasks : Application(), Configuration.Provider {
         NotificationSchedulerIntentService.enqueueWork(context, false)
         CalendarNotificationIntentService.enqueueWork(context)
         refreshScheduler.get().scheduleAll()
-        workManager.get().updateBackgroundSync()
-        workManager.get().scheduleMidnightRefresh()
-        workManager.get().scheduleBackup()
-        workManager.get().scheduleConfigRefresh()
+        workManager.get().apply {
+            updateBackgroundSync()
+            scheduleMidnightRefresh()
+            scheduleBackup()
+            scheduleConfigRefresh()
+            OpenTaskContentObserver.registerObserver(
+                    context, OpenTaskContentObserver(preferences, this))
+        }
         geofenceApi.get().registerAll()
         FileHelper.delete(context, preferences.cacheDirectory)
         billingClient.get().queryPurchases()
