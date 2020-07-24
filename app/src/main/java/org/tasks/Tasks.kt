@@ -80,7 +80,7 @@ class Tasks : Application(), Configuration.Provider {
             scheduleBackup()
             scheduleConfigRefresh()
             OpenTaskContentObserver.registerObserver(
-                    context, OpenTaskContentObserver(preferences, this))
+                    context, OpenTaskContentObserver(context, this))
         }
         geofenceApi.get().registerAll()
         FileHelper.delete(context, preferences.cacheDirectory)

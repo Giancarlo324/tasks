@@ -51,40 +51,83 @@ class OpenTasksSynchronizer @Inject constructor(
 
     private val cr = context.contentResolver
 
-    suspend fun sync() {
-        val accountMap = openTaskDao.getLists().groupBy { it.account!! }
-        caldavDao
-                .findDeletedAccounts(accountMap.keys.toList())
-                .forEach { taskDeleter.delete(it) }
-        accountMap.forEach { sync(it.key, it.value) }
+    suspend fun sync() = getLists().forEach { (account, lists) -> sync(account, lists) }
+
+    private suspend fun getLists(): Map<String, List<CaldavCalendar>> =
+            openTaskDao
+                    .getLists()
+                    .groupBy { it.account!! }
+                    .apply {
+                        caldavDao
+                                .findDeletedAccounts(this.keys.toList())
+                                .forEach { taskDeleter.delete(it) }
+                    }
+                    .onEach { (account, lists) ->
+                        caldavDao
+                                .findDeletedCalendars(account, lists.mapNotNull { it.url })
+                                .forEach { taskDeleter.delete(it) }
+                    }
+
+    suspend fun sync(id: Long) {
+        openTaskDao.getTaskInfo(id) { syncId, listId, etag, uid ->
+            openTaskDao
+                    .getList(listId)
+                    ?.let { (account, url) -> caldavDao.getCalendarByUrl(account, url) }
+                    ?.let {
+                        val task = caldavDao.getTaskByRemoteId(it.uuid!!, uid)
+                        applyChanges(it, listId, syncId, etag, task)
+                        localBroadcastManager.broadcastRefresh()
+                    }
+        } ?: Timber.e("Failed to find $id")
+    }
+
+    suspend fun syncList(id: Long) {
+        val calendar = openTaskDao
+                .getLists()
+                .firstOrNull { it.id == id }
+        if (calendar == null) {
+            Timber.d("list $id was deleted")
+            getLists()
+        } else {
+            val account = calendar.account!!
+            getOrCreateAccount(account)
+            toLocalCalendar(account, calendar)
+        }
     }
 
     private suspend fun sync(account: String, lists: List<CaldavCalendar>) {
-        val caldavAccount = caldavDao.getAccountByUuid(account) ?: CaldavAccount().apply {
-            uuid = account
-            name = account.split(":")[1]
-            accountType = CaldavAccount.TYPE_OPENTASKS
-            id = caldavDao.insert(this)
-        }
-        caldavDao
-                .findDeletedCalendars(account, lists.mapNotNull { it.url })
-                .forEach { taskDeleter.delete(it) }
+        val caldavAccount = getOrCreateAccount(account)
         lists.forEach {
-            val calendar = caldavDao.getCalendarByUrl(account, it.url!!) ?: CaldavCalendar().apply {
-                uuid = UUIDHelper.newUUID()
-                url = it.url
-                this.account = account
-                caldavDao.insert(this)
-            }
-            if (calendar.name != it.name || calendar.color != it.color) {
-                calendar.color = it.color
-                calendar.name = it.name
-                caldavDao.update(calendar)
-                localBroadcastManager.broadcastRefreshList()
-            }
+            val calendar = toLocalCalendar(account, it)
             sync(calendar, it.ctag, it.id)
         }
         setError(caldavAccount, null)
+    }
+
+    private suspend fun getOrCreateAccount(account: String): CaldavAccount =
+            caldavDao.getAccountByUuid(account) ?: CaldavAccount().apply {
+                uuid = account
+                name = account.split(":")[1]
+                accountType = CaldavAccount.TYPE_OPENTASKS
+                id = caldavDao.insert(this)
+            }
+
+    private suspend fun toLocalCalendar(account: String, remote: CaldavCalendar): CaldavCalendar {
+        val local = caldavDao.getCalendarByUrl(account, remote.url!!) ?: CaldavCalendar().apply {
+            uuid = UUIDHelper.newUUID()
+            url = remote.url
+            this.account = account
+            caldavDao.insert(this)
+            Timber.d("Created calendar: $this")
+        }
+        if (local.name != remote.name || local.color != remote.color) {
+            local.color = remote.color
+            local.name = remote.name
+            caldavDao.update(local)
+            Timber.d("Updated calendar: $local")
+            localBroadcastManager.broadcastRefreshList()
+        }
+        return local
     }
 
     private suspend fun sync(calendar: CaldavCalendar, ctag: String?, listId: Long) {
@@ -169,17 +212,13 @@ class OpenTasksSynchronizer @Inject constructor(
         } else {
             null
         })
+        values.put(Tasks.IS_ALLDAY, if (task.hasDueDate() && !task.hasDueTime()) 1 else 0)
         values.put(Tasks.DUE, when {
-            task.hasDueTime() -> {
-                values.put(Tasks.IS_ALLDAY, null as Int?)
-                newDateTime(task.dueDate).toDateTime().time
-            }
-            task.hasDueDate() -> {
-                values.put(Tasks.IS_ALLDAY, 1)
-                Date(task.dueDate).time
-            }
+            task.hasDueTime() -> newDateTime(task.dueDate).toDateTime().time
+            task.hasDueDate() -> Date(task.dueDate).time
             else -> null
         })
+        values.put(Tasks.COMPLETED_IS_ALLDAY, 0)
         values.put(Tasks.COMPLETED, if (task.isCompleted) task.completionDate else null)
         values.put(Tasks.STATUS, if (task.isCompleted) Tasks.STATUS_COMPLETED else null)
         values.put(Tasks.PERCENT_COMPLETE, if (task.isCompleted) 100 else null)
@@ -227,13 +266,13 @@ class OpenTasksSynchronizer @Inject constructor(
     private suspend fun applyChanges(
             calendar: CaldavCalendar,
             listId: Long,
-            item: String,
+            syncId: String,
             etag: String?,
             existing: CaldavTask?) {
         cr.query(
                 Tasks.getContentUri(openTaskDao.authority),
                 null,
-                "${Tasks.LIST_ID} = $listId AND ${Tasks._SYNC_ID} = '$item'",
+                "${Tasks.LIST_ID} = $listId AND ${Tasks._SYNC_ID} = '$syncId'",
                 null,
                 null)?.use {
             if (!it.moveToFirst()) {
@@ -245,7 +284,7 @@ class OpenTasksSynchronizer @Inject constructor(
                 task = taskCreator.createWithValues("")
                 taskDao.createNew(task)
                 val remoteId = it.getString(Tasks._UID)
-                caldavTask = CaldavTask(task.id, calendar.uuid, remoteId, item)
+                caldavTask = CaldavTask(task.id, calendar.uuid, remoteId, syncId)
             } else {
                 task = taskDao.fetch(existing.task)!!
                 caldavTask = existing
@@ -266,7 +305,6 @@ class OpenTasksSynchronizer @Inject constructor(
             })
             iCalendar.setPlace(task.id, it.getString(Tasks.GEO).toGeo())
             task.setRecurrence(it.getString(Tasks.RRULE).toRRule())
-            // apply tags
             task.suppressSync()
             task.suppressRefresh()
             taskDao.save(task)

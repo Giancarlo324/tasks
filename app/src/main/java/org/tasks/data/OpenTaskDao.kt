@@ -8,11 +8,9 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import net.fortuna.ical4j.model.property.XProperty
-import org.dmfs.tasks.contract.TaskContract
-import org.dmfs.tasks.contract.TaskContract.Properties
+import org.dmfs.tasks.contract.TaskContract.*
 import org.dmfs.tasks.contract.TaskContract.Property.Category
 import org.dmfs.tasks.contract.TaskContract.Property.Relation
-import org.dmfs.tasks.contract.TaskContract.Tasks
 import org.json.JSONObject
 import org.tasks.R
 import org.tasks.caldav.iCalendar.Companion.APPLE_SORT_ORDER
@@ -36,21 +34,21 @@ class OpenTaskDao @Inject constructor(
     suspend fun getLists(): List<CaldavCalendar> = withContext(Dispatchers.IO) {
         val calendars = ArrayList<CaldavCalendar>()
         cr.query(
-                TaskContract.TaskLists.getContentUri(authority),
+                TaskLists.getContentUri(authority),
                 null,
-                "${TaskContract.TaskListColumns.SYNC_ENABLED}=1 AND (${TaskContract.ACCOUNT_TYPE} = 'bitfire.at.davdroid' OR ${TaskContract.ACCOUNT_TYPE} = 'com.etesync.syncadapter')",
+                "${TaskListColumns.SYNC_ENABLED}=1 AND ($ACCOUNT_TYPE = 'bitfire.at.davdroid' OR $ACCOUNT_TYPE = 'com.etesync.syncadapter')",
                 null,
                 null)?.use {
             while (it.moveToNext()) {
-                val accountType = it.getString(TaskContract.TaskLists.ACCOUNT_TYPE)
-                val accountName = it.getString(TaskContract.TaskLists.ACCOUNT_NAME)
+                val accountType = it.getString(TaskLists.ACCOUNT_TYPE)
+                val accountName = it.getString(TaskLists.ACCOUNT_NAME)
                 calendars.add(CaldavCalendar().apply {
-                    id = it.getLong(TaskContract.TaskLists._ID)
+                    id = it.getLong(TaskLists._ID)
                     account = "$accountType:$accountName"
-                    name = it.getString(TaskContract.TaskLists.LIST_NAME)
-                    color = it.getInt(TaskContract.TaskLists.LIST_COLOR)
-                    url = it.getString(TaskContract.CommonSyncColumns._SYNC_ID)
-                    ctag = it.getString(TaskContract.TaskLists.SYNC_VERSION)
+                    name = it.getString(TaskLists.LIST_NAME)
+                    color = it.getInt(TaskLists.LIST_COLOR)
+                    url = it.getString(CommonSyncColumns._SYNC_ID)
+                    ctag = it.getString(TaskLists.SYNC_VERSION)
                             ?.let(::JSONObject)
                             ?.getString("value")
                 })
@@ -197,6 +195,41 @@ class OpenTaskDao @Inject constructor(
                         put(Relation.RELATED_ID, getId(caldavTask.remoteParent))
                     })
                 }
+    }
+
+    suspend fun getTaskInfo(id: Long, callback: suspend (String, Long, String, String) -> Unit) = withContext(Dispatchers.IO) {
+        cr.query(
+                Tasks.getContentUri(authority),
+                arrayOf(Tasks._SYNC_ID, Tasks.LIST_ID, Tasks.SYNC1, Tasks._UID),
+                "${Tasks._ID} = $id",
+                null,
+                null)?.use {
+            if (it.moveToFirst()) {
+                callback.invoke(
+                        it.getString(Tasks._SYNC_ID)!!,
+                        it.getLong(Tasks.LIST_ID),
+                        it.getString(Tasks.SYNC1)!!,
+                        it.getString(Tasks._UID)!!)
+            }
+        }
+    }
+
+    suspend fun getList(listId: Long): Pair<String, String>? = withContext(Dispatchers.IO) {
+        cr.query(
+                TaskLists.getContentUri(authority),
+                arrayOf(TaskLists.ACCOUNT_TYPE, TaskLists.ACCOUNT_NAME, TaskLists._SYNC_ID),
+                "${TaskLists._ID} = $listId",
+                null,
+                null)?.use {
+            if (it.moveToFirst()) {
+                val type = it.getString(TaskLists.ACCOUNT_TYPE)
+                val name = it.getString(TaskLists.ACCOUNT_NAME)
+                Pair("$type:$name", it.getString(TaskLists._SYNC_ID)!!)
+            } else {
+                Timber.d("Failed to find list $listId")
+                null
+            }
+        }
     }
 
     companion object {

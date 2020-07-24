@@ -13,6 +13,8 @@ interface WorkManager {
 
     fun sync(immediate: Boolean)
 
+    fun sync(taskId: Long? = null, listId: Long? = null)
+
     fun reverseGeocode(place: Place)
 
     fun updateBackgroundSync()
@@ -43,6 +45,7 @@ interface WorkManager {
         const val TAG_REFRESH = "tag_refresh"
         const val TAG_MIDNIGHT_REFRESH = "tag_midnight_refresh"
         const val TAG_SYNC = "tag_sync"
+        const val TAG_OPENTASK_SYNC = "tag_opentask_sync"
         const val TAG_BACKGROUND_SYNC = "tag_background_sync"
         const val TAG_REMOTE_CONFIG = "tag_remote_config"
     }

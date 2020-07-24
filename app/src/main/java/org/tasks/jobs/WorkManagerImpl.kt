@@ -23,6 +23,7 @@ import org.tasks.jobs.WorkManager.Companion.REMOTE_CONFIG_INTERVAL_HOURS
 import org.tasks.jobs.WorkManager.Companion.TAG_BACKGROUND_SYNC
 import org.tasks.jobs.WorkManager.Companion.TAG_BACKUP
 import org.tasks.jobs.WorkManager.Companion.TAG_MIDNIGHT_REFRESH
+import org.tasks.jobs.WorkManager.Companion.TAG_OPENTASK_SYNC
 import org.tasks.jobs.WorkManager.Companion.TAG_REFRESH
 import org.tasks.jobs.WorkManager.Companion.TAG_REMOTE_CONFIG
 import org.tasks.jobs.WorkManager.Companion.TAG_SYNC
@@ -59,6 +60,16 @@ class WorkManagerImpl constructor(
                                             .build())
                             .build())
         }
+    }
+
+    override fun sync(taskId: Long?, listId: Long?) {
+        val data = Data.Builder()
+        taskId?.let { data.putLong(OpenTaskWork.EXTRA_TASK_ID, it) }
+        listId?.let { data.putLong(OpenTaskWork.EXTRA_LIST_ID, it) }
+        val request = OneTimeWorkRequest.Builder(OpenTaskWork::class.java)
+                .setInputData(data.build())
+                .build()
+        workManager.beginUniqueWork(TAG_OPENTASK_SYNC, ExistingWorkPolicy.APPEND, request).enqueue()
     }
 
     override fun sync(immediate: Boolean) {
